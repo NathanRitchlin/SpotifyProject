@@ -4,6 +4,7 @@ import urllib.parse
 import os
 from datetime import datetime
 from dotenv import load_dotenv
+from google import genai
 load_dotenv()
 import time
 
@@ -11,10 +12,12 @@ app = Flask(__name__)
 app.secret_key = os.getenv("secretKey")
 clientID = os.getenv("clientID")
 clientSecret = os.getenv("clientSecret")
-redirectURI = "http://localhost:5000/callback"
+aiKey = os.getenv("aiKey")
+redirectURI = "http://127.0.0.1:8888/callback"
 authURL = "https://accounts.spotify.com/authorize"
 tokenURL = "https://accounts.spotify.com/api/token"
 apiBaseURL = "https://api.spotify.com/v1/"
+clientGoogle = genai.Client(api_key= aiKey)
 
 
 #Opening page of the website
@@ -60,7 +63,7 @@ def callback():
         session["refresh_token"] = tokenInfo["refresh_token"]
         session["expires_at"] = datetime.now().timestamp() + tokenInfo["expires_in"]
 
-        return "<a href = '/likedsongs'> Check which liked songs arent in playlists </a> <h2>OR</h2> <a href = '/popularity'> Rank your liked songs by popularity </a> <br> <br><br><br><br><a href= '/feedback'> Give us some feedback! </a>"
+        return "<a href = '/artistGender'> Check the gender of your liked songs artists <a> <h2>OR</h2> <a href = '/likedsongs'> Check which liked songs arent in playlists </a> <h2>OR</h2> <a href = '/popularity'> Rank your liked songs by popularity </a> <br> <br><br><br><br><a href= '/feedback'> Give us some feedback! </a>"
 
 
 #main website webpage
@@ -70,7 +73,7 @@ def main():
         return redirect("/login")
     if(datetime.now().timestamp() > session["expires_at"]):
         return redirect("/refresh-token")
-    return "<a href = '/likedsongs'> Check which liked songs arent in playlists </a> <h2>OR</h2> <a href = '/popularity'> Rank your liked songs by popularity </a> <br> <br><br><br><br><a href= '/feedback'> Give us some feedback! </a>"
+    return "<a href = '/artistGender'> Check the gender of your liked songs artists <a> <h2>OR</h2> <a href = '/likedsongs'> Check which liked songs arent in playlists </a> <h2>OR</h2> <a href = '/popularity'> Rank your liked songs by popularity </a> <br> <br><br><br><br><a href= '/feedback'> Give us some feedback! </a>"
 
 #if the current API token runs out, a new one is acquired
 @app.route("/refresh-token")
@@ -233,6 +236,70 @@ def get_likedsongs():
         addingSongs = requests.post(apiBaseURL + "playlists/"+ playlistID + "/tracks", json= uris, headers= headers)
     return "<h3>" + counterString + "</h3>" + "<h3>" + unaddedCounterString + "</h3>" "<a href = '/main'> Head back to main page </a><br><a href = '/main'> Give us some feedback! </a>"
 
+@app.route("/artistGender")
+def getGenders():
+    if ("access_token" not in session):
+        return redirect("/login")
+    if (datetime.now().timestamp() > session["expires_at"]):
+        return redirect("/refresh-token")
+
+    # Headers needed for GET request permissions
+    headers = {
+        "Authorization": f"Bearer {session['access_token']}"
+    }
+    headers2 = {
+        "Authorization": f"Bearer {session['access_token']}"
+                         "Content-Type: application/json"
+    }
+    me = requests.get(apiBaseURL + "me", headers=headers)
+    response2 = requests.get(apiBaseURL + "me" + "/tracks", headers=headers)
+    favorites = response2.json()
+    length = favorites["total"]
+    offset = 0
+    artists = {}
+
+    # assembles the list of the user's liked songs artists
+    while (length > 0):
+        response2 = requests.get(apiBaseURL + "me" + "/tracks" + "?limit=50&offset=" + str(offset), headers=headers)
+        favorites = response2.json()
+        for s in favorites["items"]:
+            for artist in s["track"]["artists"]:
+                if(artist["name"] not in list(artists.keys())):
+                    artists[artist["name"]] = 1
+                else:
+                    artists[artist["name"]] += 1
+        offset += 50
+        length -= 50
+    print(artists)
+    artistList = ""
+    for artist in artists.keys():
+        artistList += artist + ", "
+    response = clientGoogle.models.generate_content(
+        model="gemini-3.5-pro",
+        contents="Tell me the gender of the following artists:"+ artistList + "If the artist is a band, tell the gender of the lead singer. Answer only in one word, with a line delineating each artist. If you don't know, say Unknown",
+    )
+
+    print(response.text)
+    lines = response.text.splitlines()
+    counter = 0
+    genderArtists = {}
+    for artist in artists.keys():
+        genderArtists[artist] = lines[counter]
+        counter += 1
+    print(genderArtists)
+    males = 0
+    females = 0
+    unknown = 0
+    for stat in genderArtists.values():
+        if(stat == "Male"):
+            males +=1
+        elif(stat == "Female"):
+            females += 1
+        else:
+            unknown += 1
+    print(males, females, unknown)
+    return "<a href = '/main'> Head back to main page </a>"
+
 #feedback webpage which allows users to comment on the webpage, increasing its efficiency and satisfaction
 @app.route("/feedback")
 def returnFeedback():
@@ -312,5 +379,6 @@ def isSongUnadded(unaddedSong, playlists):
    return True
                 
 #starts webapp
+
 if(__name__ == "__main__"):
-    app.run(host="0.0.0.0", debug= True)
+    app.run(host="0.0.0.0", port=8888, debug=True)
