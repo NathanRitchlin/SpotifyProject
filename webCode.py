@@ -5,6 +5,7 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 from google import genai
+from openai import OpenAI
 load_dotenv()
 import time
 
@@ -13,11 +14,13 @@ app.secret_key = os.getenv("secretKey")
 clientID = os.getenv("clientID")
 clientSecret = os.getenv("clientSecret")
 aiKey = os.getenv("aiKey")
+gptKey = os.getenv("gptKey")
 redirectURI = "http://127.0.0.1:8888/callback"
 authURL = "https://accounts.spotify.com/authorize"
 tokenURL = "https://accounts.spotify.com/api/token"
 apiBaseURL = "https://api.spotify.com/v1/"
 clientGoogle = genai.Client(api_key= aiKey)
+clientGPT = OpenAI(api_key= gptKey)
 
 
 #Opening page of the website
@@ -271,29 +274,66 @@ def getGenders():
         offset += 50
         length -= 50
     print(artists)
-    artistList = ""
+    artists.pop("")
+    artistList = []
     for artist in artists.keys():
-        artistList += artist + ", "
-    response = clientGoogle.models.generate_content(
-        model="gemini-3.5-pro",
-        contents="Tell me the gender of the following artists:"+ artistList + "If the artist is a band, tell the gender of the lead singer. Answer only in one word, with a line delineating each artist. If you don't know, say Unknown",
-    )
+        artistList.append(artist + ", ")
 
-    print(response.text)
-    lines = response.text.splitlines()
+    genderList = []
+    batchSize = 100
+    length = len(artistList)
+    while(length > 0):
+        print(length)
+        query = ""
+        if(length >= batchSize):
+            for x in range(len(artistList)-length, len(artistList)-length + batchSize):
+                query += artistList[x]
+            print(query)
+            response = clientGPT.responses.create(
+                model="gpt-5",
+                input="Tell me the gender of the following artists. If the artist is a band, tell the gender of the lead singer. If you don't know, say Unknown. Return your response as a singular string, with M standing for male, F standing for female, and U standing for unknown/nonbinary. Make sure to check that the length of the string is 100, as that is the number of given artists. Here is the list:" + query
+            )
+            print(response.output_text)
+            updatedText = response.output_text
+            while (len(updatedText) < 100):
+                updatedText += "?"
+        else:
+            for x in range(len(artistList)-length, len(artistList)):
+                query += artistList[x]
+            print(query)
+            response = clientGPT.responses.create(
+                model="gpt-5",
+                input="Tell me the gender of the following artists. If the artist is a band, tell the gender of the lead singer. If you don't know, say Unknown. Return your response as a singular string, with M standing for male, F standing for female, and U standing for unknown/nonbinary. Here is the list:" + query
+            )
+            print(response.output_text)
+            updatedText = response.output_text
+            while (len(updatedText) < length):
+                updatedText += "?"
+
+
+        print(updatedText)
+        for char in updatedText:
+            genderList.append(char)
+        if (length >= batchSize):
+            length-= batchSize
+        else:
+            length = 0
+
+    print(len(genderList))
+    print(len(artists.keys()))
     counter = 0
     genderArtists = {}
     for artist in artists.keys():
-        genderArtists[artist] = lines[counter]
+        genderArtists[artist] = genderList[counter]
         counter += 1
     print(genderArtists)
     males = 0
     females = 0
     unknown = 0
     for stat in genderArtists.values():
-        if(stat == "Male"):
+        if(stat == "M"):
             males +=1
-        elif(stat == "Female"):
+        elif(stat == "F"):
             females += 1
         else:
             unknown += 1
